@@ -5,6 +5,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <sys/ioctl.h>
+#include <unistd.h>
 
 struct framebuffer_info
 {
@@ -20,76 +21,53 @@ int main ( int argc, const char *argv[] )
     cv::Mat frame;
 
     // open video stream device
-    // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#a5d5f5dacb77bbebdcbfb341e3d4355c1
     cv::VideoCapture camera ( 2 );
 
     // get info of the framebuffer
-    // fb_info = ......
-	 framebuffer_info fb_info = get_framebuffer_info("/dev/fb0");
+    framebuffer_info fb_info = get_framebuffer_info("/dev/fb0");
 
     // open the framebuffer device
-    // http://www.cplusplus.com/reference/fstream/ofstream/ofstream/
     std::ofstream ofs("/dev/fb0", std::ios::out | std::ios::binary);
 
-    // check if video stream device is opened success or not
-    // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#a9d2ca36789e7fcfe7a7be3b328038585
     if( !camera.isOpened())
     {
         std::cerr << "Could not open video device." << std::endl;
         return 1;
     }
 
-    // set propety of the frame
-    // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#a8c6d8c2d37505b5ca61ffd4bb54e9a7c
-    // https://docs.opencv.org/3.4.7/d4/d15/group__videoio__flags__base.html#gaeb8dd9c89c10a5c63c139bf7c4f5704d
-	
-	camera.set(cv::CAP_PROP_FRAME_WIDTH, fb_info.xres_virtual);
+    // set property of the frame
+    camera.set(cv::CAP_PROP_FRAME_WIDTH, fb_info.xres_virtual);
 
     while ( true )
     {
-        // get video frame from stream
-        // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#a473055e77dd7faa4d26d686226b292c1
-        // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#a199844fb74226a28b3ce3a39d1ff6765
-        // frame = ......
-		camera >> frame;
+        camera >> frame;
         if (frame.empty()) {
             std::cerr << "Error: Could not grab a frame." << std::endl;
             break;
         }
 
-        // get size of the video frame
-        // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a146f8e8dda07d1365a575ab83d9828d1
-        // frame_size = ......
-		cv::Size2f frame_size = frame.size();
+        cv::Size2f frame_size = frame.size();
 
-        // transfer color space from BGR to BGR565 (16-bit image) to fit the requirement of the LCD
-        // https://docs.opencv.org/3.4.7/d8/d01/group__imgproc__color__conversions.html#ga397ae87e1288a81d2363b61574eb8cab
-        // https://docs.opencv.org/3.4.7/d8/d01/group__imgproc__color__conversions.html#ga4e0972be5de079fed4e3a10e24ef5ef0
-		
-		// Convert BGR to BGR565 (16-bit format)
+        // Convert BGR to BGR565 (16-bit format)
         cv::Mat frame_16bit;
         cv::cvtColor(frame, frame_16bit, cv::COLOR_BGR2BGR565);
 
-        // output the video frame to framebufer row by row
+        // Calculate the padding to center the image on the screen
+        int x_offset = (fb_info.xres_virtual - frame_16bit.cols) / 2;
+        int y_offset = (fb_info.xres_virtual - frame_16bit.rows) / 2;
+
+        // Output the video frame to framebuffer row by row
         for ( int y = 0; y < frame_size.height; y++ )
         {
-            // move to the next written position of output device framebuffer by "std::ostream::seekp()"
-            // http://www.cplusplus.com/reference/ostream/ostream/seekp/
-			ofs.seekp(y * fb_info.xres_virtual * (fb_info.bits_per_pixel / 8));
+            // Move to the correct position in the framebuffer with padding
+            ofs.seekp(((y + y_offset) * fb_info.xres_virtual + x_offset) * (fb_info.bits_per_pixel / 8));
 
-            // write to the framebuffer by "std::ostream::write()"
-            // you could use "cv::Mat::ptr()" to get the pointer of the corresponding row.
-            // you also need to cacluate how many bytes required to write to the buffer
-            // http://www.cplusplus.com/reference/ostream/ostream/write/
-            // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a13acd320291229615ef15f96ff1ff738
-            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)),frame_16bit.cols * (fb_info.bits_per_pixel / 8));
+            // Write the frame to the framebuffer
+            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)), frame_16bit.cols * (fb_info.bits_per_pixel / 8));
         }
     }
 
-    // closing video stream
-    // https://docs.opencv.org/3.4.7/d8/dfe/classcv_1_1VideoCapture.html#afb4ab689e553ba2c8f0fec41b9344ae6
-    camera.release ( );
-
+    camera.release();
     return 0;
 }
 

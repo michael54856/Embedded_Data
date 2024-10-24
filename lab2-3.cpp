@@ -5,10 +5,6 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <sys/ioctl.h>
-#include <thread>
-#include <atomic>
-#include <chrono>
-#include <unistd.h>
 
 struct framebuffer_info
 {
@@ -17,24 +13,6 @@ struct framebuffer_info
 };
 
 struct framebuffer_info get_framebuffer_info ( const char *framebuffer_device_path );
-
-
-std::atomic<bool> capture_screenshot(false);
-int screenshot_count = 0; // To count screenshots taken
-std::string screenshots_dir = "/run/media/mmbclk1p1/"; // Set your SD card path here
-cv::Mat last_frame; 
-
-void screenshot_capture() {
-    while (true) {
-        if (capture_screenshot) 
-		{
-            std::string filename = screenshots_dir + "screenshot_" + std::to_string(screenshot_count++) + ".png";
-            cv::imwrite(filename, last_frame);
-            capture_screenshot = false; // Reset the flag
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Avoid busy waiting
-    }
-}
 
 int main ( int argc, const char *argv[] )
 {
@@ -66,14 +44,6 @@ int main ( int argc, const char *argv[] )
     // https://docs.opencv.org/3.4.7/d4/d15/group__videoio__flags__base.html#gaeb8dd9c89c10a5c63c139bf7c4f5704d
 	
 	camera.set(cv::CAP_PROP_FRAME_WIDTH, fb_info.xres_virtual);
-	
-	 // Set up for 4:3 video recording
-    int video_width = 640;  // Set video width
-    int video_height = 480; // Set video height (4:3 aspect ratio)
-    cv::VideoWriter video_writer("/run/media/mmbclk1p1/recording.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, cv::Size(video_width, video_height));
-
-    // Start the screenshot capture thread
-    std::thread screenshot_thread(screenshot_capture);
 
     while ( true )
     {
@@ -84,43 +54,8 @@ int main ( int argc, const char *argv[] )
 		camera >> frame;
         if (frame.empty()) {
             std::cerr << "Error: Could not grab a frame." << std::endl;
-            continue;
+            break;
         }
-		
-		// Calculate new dimensions for 4:3 aspect ratio
-        int original_width = frame.cols;
-        int original_height = frame.rows;
-        float aspect_ratio = static_cast<float>(original_width) / original_height;
-
-        int new_width, new_height;
-
-        // Maintain 4:3 aspect ratio
-        if (aspect_ratio > (4.0 / 3.0)) {
-            new_width = static_cast<int>(video_height * (4.0 / 3.0));
-            new_height = video_height;
-        } else {
-            new_width = video_width;
-            new_height = static_cast<int>(video_width * (3.0 / 4.0));
-        }
-		
-		 // Resize frame to maintain aspect ratio
-        cv::Mat resized_frame;
-        cv::resize(frame, resized_frame, cv::Size(new_width, new_height));
-		
-		
-		// Create a blank image for the final output
-        cv::Mat output_frame(video_height, video_width, CV_8UC3, cv::Scalar(0, 0, 0)); // Black background
-        // Calculate the position to place the resized frame on the output frame
-        int x_offset = (video_width - new_width) / 2;
-        int y_offset = (video_height - new_height) / 2;
-
-        // Copy the resized frame to the center of the output frame
-        resized_frame.copyTo(output_frame(cv::Rect(x_offset, y_offset, new_width, new_height)));
-
-        // Start writing the frame to the video file
-        video_writer.write(output_frame);
-		
-		printf("flag: 123\n");
 
         // get size of the video frame
         // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a146f8e8dda07d1365a575ab83d9828d1
@@ -134,27 +69,20 @@ int main ( int argc, const char *argv[] )
 		// Convert BGR to BGR565 (16-bit format)
         cv::Mat frame_16bit;
         cv::cvtColor(frame, frame_16bit, cv::COLOR_BGR2BGR565);
-		
-		// Calculate the padding to center the image on the screen
-        int x_offset = (fb_info.xres_virtual - frame_16bit.cols) / 2;
-        int y_offset = (fb_info.xres_virtual - frame_16bit.rows) / 2;
 
         // output the video frame to framebufer row by row
         for ( int y = 0; y < frame_size.height; y++ )
         {
-            // Move to the correct position in the framebuffer with padding
-            ofs.seekp(((y + y_offset) * fb_info.xres_virtual + x_offset) * (fb_info.bits_per_pixel / 8));
+            // move to the next written position of output device framebuffer by "std::ostream::seekp()"
+            // http://www.cplusplus.com/reference/ostream/ostream/seekp/
+			ofs.seekp(y * fb_info.xres_virtual * (fb_info.bits_per_pixel / 8));
 
-            // Write the frame to the framebuffer
-            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)), frame_16bit.cols * (fb_info.bits_per_pixel / 8));
-        }
-		
-		// Check for keyboard input for capturing screenshots
-		char press = getchar();
-        if (press == 'c') { // Press 'c' to capture screenshot
-			cout << "screenShot\n";
-			last_frame = frame.clone(); // Clone the current frame to last_frame
-            capture_screenshot = true; // Set flag to capture
+            // write to the framebuffer by "std::ostream::write()"
+            // you could use "cv::Mat::ptr()" to get the pointer of the corresponding row.
+            // you also need to cacluate how many bytes required to write to the buffer
+            // http://www.cplusplus.com/reference/ostream/ostream/write/
+            // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a13acd320291229615ef15f96ff1ff738
+            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)),frame_16bit.cols * (fb_info.bits_per_pixel / 8));
         }
     }
 
@@ -196,5 +124,4 @@ struct framebuffer_info get_framebuffer_info ( const char *framebuffer_device_pa
 
     close(fd);
     return fb_info;
-
 };
