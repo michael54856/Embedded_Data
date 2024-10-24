@@ -116,11 +116,12 @@ int main ( int argc, const char *argv[] )
 
         // Copy the resized frame to the center of the output frame
         resized_frame.copyTo(output_frame(cv::Rect(x_offset, y_offset, new_width, new_height)));
+		
+		printf("writing frame to video\n");
 
         // Start writing the frame to the video file
         video_writer.write(output_frame);
 		
-		printf("flag: 123\n");
 
         // get size of the video frame
         // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a146f8e8dda07d1365a575ab83d9828d1
@@ -134,19 +135,20 @@ int main ( int argc, const char *argv[] )
 		// Convert BGR to BGR565 (16-bit format)
         cv::Mat frame_16bit;
         cv::cvtColor(frame, frame_16bit, cv::COLOR_BGR2BGR565);
-		
-		// Calculate the padding to center the image on the screen
-        int x_offset = (fb_info.xres_virtual - frame_16bit.cols) / 2;
-        int y_offset = (fb_info.xres_virtual - frame_16bit.rows) / 2;
 
         // output the video frame to framebufer row by row
         for ( int y = 0; y < frame_size.height; y++ )
         {
-            // Move to the correct position in the framebuffer with padding
-            ofs.seekp(((y + y_offset) * fb_info.xres_virtual + x_offset) * (fb_info.bits_per_pixel / 8));
+            // move to the next written position of output device framebuffer by "std::ostream::seekp()"
+            // http://www.cplusplus.com/reference/ostream/ostream/seekp/
+			ofs.seekp(y * fb_info.xres_virtual * (fb_info.bits_per_pixel / 8));
 
-            // Write the frame to the framebuffer
-            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)), frame_16bit.cols * (fb_info.bits_per_pixel / 8));
+            // write to the framebuffer by "std::ostream::write()"
+            // you could use "cv::Mat::ptr()" to get the pointer of the corresponding row.
+            // you also need to cacluate how many bytes required to write to the buffer
+            // http://www.cplusplus.com/reference/ostream/ostream/write/
+            // https://docs.opencv.org/3.4.7/d3/d63/classcv_1_1Mat.html#a13acd320291229615ef15f96ff1ff738
+            ofs.write(reinterpret_cast<const char*>(frame_16bit.ptr(y)),frame_16bit.cols * (fb_info.bits_per_pixel / 8));
         }
 		
 		// Check for keyboard input for capturing screenshots
